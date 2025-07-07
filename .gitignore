@@ -1,0 +1,100 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Virtual environments
+.env/
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# PyCharm settings
+.idea/
+
+# Python egg metadata
+*.egg-info/
+*.egg
+
+# Distribution / packaging
+build/
+dist/
+*.whl
+*.tar.gz
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# MyPy / Pyright
+.mypy_cache/
+.pyright/
+
+# Pyre
+.pyre/
+
+# Bandit security reports
+bandit.json
+
+# Jupyter Notebook metadata
+*.nbconvert.ipynb
+
+# Logs and temp files
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+*.swn
+
+# SQLite database files
+*.sqlite3
+*.db
+
+# Project-specific
+data/
+output/
+*.csv
+*.xlsx
+*.json
+secrets.json
+
+# Ignore screenshots or image artifacts
+screenshots/
+*.png
+*.jpg
+*.jpeg
+
+# Ignore cloud or credentials
+*.pem
+*.key
+*.crt
+*.env
+.env.local
+.env.*.local
+
+# Ignore folder for lock resources
+downloaded_files/
+# Ignore folder for output
+data/

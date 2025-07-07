@@ -1,0 +1,12 @@
+pandas~=2.3.0
+numpy~=2.2.6
+requests~=2.32.3
+bs4~=0.0.2
+beautifulsoup4~=4.13.4
+tqdm~=4.67.1
+fake-useragent~=2.2.0
+selenium~=4.33.0
+cloudinary~=1.44.0
+playwright~=1.52.0
+matplotlib~=3.10.3
+seaborn~=0.13.2
