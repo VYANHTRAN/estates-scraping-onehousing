@@ -56,8 +56,7 @@ def run_full_pipeline():
     print("[INFO] Running full scraping and cleaning pipeline...")
     run_scrape_urls()
     run_scrape_details()
-    run_screenshot_upload()
-    run_clean_data()  # Add the cleaning step to the end
+    run_clean_data()  
     print("[INFO] Full pipeline completed.")
 
 
