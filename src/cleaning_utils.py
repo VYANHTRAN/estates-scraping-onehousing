@@ -13,8 +13,8 @@ from src.config import (
 class DataCleaner:
     """
     Cleans and transforms raw scraped property data into a structured format.
-    It loads the raw CSV and image map, processes the data using a series of
-    extraction functions, and saves the final result to an Excel file.
+    It loads the raw CSV and image map (optionally), processes the data using a series
+    of extraction functions, and saves the final result to an Excel file.
     """
 
     def __init__(self):
@@ -27,12 +27,11 @@ class DataCleaner:
 
     def load_data(self):
         """
-        Loads the raw data and image map, then merges them.
+        Loads the raw data and image map (if available), then merges them.
+        Includes deduplication by 'property_id'.
         """
         if not os.path.exists(self.raw_details_path):
             raise FileNotFoundError(f"Raw details file not found: {self.raw_details_path}")
-        if not os.path.exists(self.image_map_path):
-            raise FileNotFoundError(f"Image map file not found: {self.image_map_path}")
 
         df = pd.read_csv(self.raw_details_path)
         df.columns = [
@@ -40,14 +39,33 @@ class DataCleaner:
             "property_url", "image_url", "city", "district", "alley_width",
             "features", "property_description"
         ]
-        image_map_df = pd.read_csv(self.image_map_path)
+        
+        # Load image map if it exists, else create empty 'screenshot_url' column
+        if os.path.exists(self.image_map_path):
+            image_map_df = pd.read_csv(self.image_map_path)
+            merged_df = pd.merge(df, image_map_df, how="left", on="property_id")
+            print(f"[INFO] Loaded and merged image map with {len(image_map_df)} records.")
+        else:
+            print(f"[WARN] Image map file not found: {self.image_map_path}. Proceeding without screenshot URLs.")
+            merged_df = df.copy() 
+            merged_df['screenshot_url'] = np.nan 
 
-        self.df = pd.merge(df, image_map_df, how="left", on="property_id")
-        self.df = self.df.iloc[:-1]  # intentional row removal
+        # The intentional row removal should be carefully considered. 
+        # If it's always the last row from `listing_details.csv`, it might be an artifact.
+        # Ensure this is the desired behavior for your data.
+        if not merged_df.empty:
+            merged_df = merged_df.iloc[:-1]  
 
-        print(f"[INFO] Loaded and merged {len(self.df)} records.")
+        # Deduplicate by 'property_id', keeping the first occurrence
+        initial_rows = len(merged_df)
+        self.df = merged_df.drop_duplicates(subset=['property_id'], keep='first')
+        
+        if len(self.df) < initial_rows:
+            print(f"[INFO] Deduplicated {initial_rows - len(self.df)} records by 'property_id'.")
 
-    # -- Helper Methods --
+        print(f"[INFO] Loaded and prepared {len(self.df)} records for cleaning.")
+
+    # -- Helper Methods (no changes needed here as they operate on self.df columns) --
     @staticmethod
     def _extract_city(row):
         if pd.notna(row.get("city")):
@@ -296,16 +314,22 @@ class DataCleaner:
         if "đất nền" in text:
             return ""
 
-        total_floors += float(floor.group(1)) if floor else np.nan
-        total_floors += float(basement.group(1)) if basement else np.nan
+        # Safely extract and convert to float, default to 0 if not found
+        total_floors += float(floor.group(1)) if floor else 0.0
+        total_floors += float(basement.group(1)) if basement else 0.0
 
         if total_floors == 1:
             return 6275876
 
-        if basement:
+        # Check if basement existed to apply basement price
+        if basement and float(basement.group(1)) > 0: # Ensure basement was actually found and has floors
             return 9504604
 
-        return 8221171
+        # Default for multi-floor without specific basement criteria met
+        if total_floors > 1: # Added condition to prevent '8221171' for 'đất nền'
+            return 8221171
+        
+        return np.nan # For 'đất nền' or cases where no construction price can be estimated
 
     def clean_data(self):
         """Applies all cleaning and transformation steps to the loaded data."""
@@ -361,7 +385,7 @@ class DataCleaner:
             "Khoảng cách tới trục đường chính (m)": self.df.apply(self._extract_distance_to_main_road, axis=1),
             "Mục đích sử dụng đất": "Đất ở",
             "Hình ảnh của bài đăng": self.df["image_url"],
-            "Ảnh chụp màn hình thông tin thu thập": self.df["screenshot_url"],
+            "Ảnh chụp màn hình thông tin thu thập": self.df["screenshot_url"], # This column will now contain NaNs if file doesn't exist
             "Yếu tố khác": ""
         })
         print("[INFO] Data cleaning process completed.")
