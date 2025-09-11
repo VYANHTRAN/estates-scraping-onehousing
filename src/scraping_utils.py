@@ -76,14 +76,15 @@ class DriverPool:
 
 
     def close_all(self):
-        while not self.pool.empty():
-            driver = self.pool.get()
+        for driver in self.all_drivers: # Iterate through all drivers and quit them
             try:
                 driver.quit()
             except Exception as e:
-                self.log(f"Error quitting driver: {e}", "ERROR")
-        if self.drivers_in_use > 0:
-            self.log(f"Warning: {self.drivers_in_use} drivers were still in use when `close_all` was called. They might not have been properly shut down.", "WARN")
+                print(f"[ERROR] Error quitting driver: {e}")
+        self.all_drivers.clear()
+        while not self.pool.empty():
+            self.pool.get()
+        self.drivers_in_use = 0
 
 
 class Scraper:
@@ -402,8 +403,14 @@ class Scraper:
                     executor.shutdown(wait=True) 
         except KeyboardInterrupt:
             self.log("KeyboardInterrupt detected. Stopping details scraping.", "INFO")
-            self.stop_requested.set() 
+            self.stop_requested.set()
+
+            for f in futures:
+                f.cancel()
+
+            executor.shutdown(wait=False, cancel_futures=True)  
             self.shutdown()
+            return
         finally:
             self._close_details_csv()
             self.log("Details CSV file closed.", "INFO")
