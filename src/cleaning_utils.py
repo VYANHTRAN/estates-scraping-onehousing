@@ -3,11 +3,7 @@ import re
 import pandas as pd
 import numpy as np
 
-from src.config import (
-    DETAILS_OUTPUT_PATH,
-    IMAGE_MAP_CSV_PATH,
-    CLEANED_DETAILS_OUTPUT_PATH
-)
+from src.config import *
 
 
 class DataCleaner:
@@ -50,11 +46,8 @@ class DataCleaner:
             merged_df = df.copy() 
             merged_df['screenshot_url'] = np.nan 
 
-        # The intentional row removal should be carefully considered. 
-        # If it's always the last row from `listing_details.csv`, it might be an artifact.
-        # Ensure this is the desired behavior for your data.
         if not merged_df.empty:
-            merged_df = merged_df.iloc[:-1]  
+            merged_df = merged_df.iloc[:-1]  # intentional removal of last row 
 
         # Deduplicate by 'property_id', keeping the first occurrence
         initial_rows = len(merged_df)

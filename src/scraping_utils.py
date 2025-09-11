@@ -200,43 +200,36 @@ class Scraper:
                 self.details_csv_writer = None
 
     def extract_listing_details(self, url):
-        # Check if a global stop has been requested at the very beginning
         if self.stop_requested.is_set():
             return None
 
-        driver = None # Initialize driver to None
+        driver = None 
+
         try:
             driver = self.driver_pool.acquire()
 
-            # Double check stop request after acquiring driver
             if self.stop_requested.is_set():
                 return None
 
             driver.get(url)
-            # No need to call driver.get(url) twice unless there's a specific reason.
-            # If the first call fails, the next line will raise an exception.
-            # driver.get(url)
             wait = WebDriverWait(driver, 5)
             wait.until(EC.presence_of_element_located((By.XPATH, "/html/body")))
 
-            # Helper functions for safe extraction of text and attributes
+            # -- Helper functions for safe extraction of text and attributes -- 
             def safe_text(by, selector, timeout=5):
                 try:
-                    # Check stop_requested within safe_text as well, especially if wait.until can be long
-                    if self.stop_requested.is_set():
-                        return None
                     return wait.until(EC.presence_of_element_located((by, selector))).text
-                except (TimeoutException, NoSuchElementException, WebDriverException): # Catch WebDriverException too
+                except (TimeoutException, NoSuchElementException, WebDriverException): 
                     return None
 
             def safe_attr(by, selector, attr, timeout=5):
                 try:
-                    if self.stop_requested.is_set():
-                        return None
                     return wait.until(EC.presence_of_element_located((by, selector))).get_attribute(attr)
-                except (TimeoutException, NoSuchElementException, WebDriverException): # Catch WebDriverException too
+                except (TimeoutException, NoSuchElementException, WebDriverException):
                     return None
+            # -- End of helper functions --
 
+            # Start extracting data
             data = {
                 "listing_title": safe_text(By.XPATH, '//*[@id="detail_title"]'),
                 "property_id": safe_text(By.CSS_SELECTOR, '#container-property div:nth-child(5) div.flex.cursor-pointer p'),
@@ -250,8 +243,6 @@ class Scraper:
                 "features": [],
                 "property_description": []
             }
-
-            if self.stop_requested.is_set(): return None # Check again before more work
 
             # Extract image URL
             try:
@@ -268,7 +259,6 @@ class Scraper:
                 script_elements = driver.find_elements(By.XPATH, '//script[@type="application/ld+json"]')
                 breadcrumb_data = None
                 for script_el in script_elements:
-                    if self.stop_requested.is_set(): return None
                     script_content = script_el.get_attribute("innerHTML")
                     try:
                         json_data = json.loads(script_content)
@@ -280,7 +270,6 @@ class Scraper:
 
                 if breadcrumb_data:
                     for item in breadcrumb_data.get("itemListElement", []):
-                        if self.stop_requested.is_set(): return None
                         if item.get("position") == 2:
                             data["city"] = item.get("name")
                         elif item.get("position") == 3:
@@ -292,7 +281,6 @@ class Scraper:
             try:
                 features = wait.until(EC.presence_of_all_elements_located((By.XPATH, '//*[@id="key-feature-item"]')))
                 for ele in features:
-                    if self.stop_requested.is_set(): return None
                     try:
                         title_element = ele.find_element(By.XPATH, './/*[@id="item_title"]')
                         text_element = ele.find_element(By.XPATH, './/*[@id="key-feature-text"]')
@@ -317,15 +305,13 @@ class Scraper:
             return data
         except WebDriverException as e:
             self.log(f"WebDriver error for {url}: {e}", "ERROR")
-            # In case of a WebDriver crash, the driver might be invalid,
-            # so we don't put it back in the pool. A new one should be created.
             if driver:
                 try:
-                    driver.quit() # Attempt to quit the faulty driver
+                    driver.quit() 
                 except Exception as quit_e:
                     self.log(f"Error quitting crashed driver: {quit_e}", "ERROR")
-                self.driver_pool.drivers_in_use -= 1 # Manually decrement
-                self.driver_pool._add_new_driver() # Replace it with a new one
+                self.driver_pool.drivers_in_use -= 1 
+                self.driver_pool._add_new_driver() 
             return None
         except Exception as e:
             self.log(f"Unexpected error in extract_listing_details for {url}: {e}", "ERROR")
@@ -336,7 +322,7 @@ class Scraper:
             elif driver and self.stop_requested.is_set(): # If stopping, quit the driver
                 try:
                     driver.quit()
-                    self.driver_pool.drivers_in_use -= 1 # Manually decrement
+                    self.driver_pool.drivers_in_use -= 1 
                 except Exception as quit_e:
                     self.log(f"Error quitting driver during shutdown: {quit_e}", "ERROR")
 
@@ -349,7 +335,7 @@ class Scraper:
             listing_copy = listing.copy()
             listing_copy["features"] = ": ".join(listing_copy.get("features", []))
             listing_copy["property_description"] = ". ".join(listing_copy.get("property_description", []))
-            with self.details_csv_lock: # Protect CSV write operation
+            with self.details_csv_lock: 
                 self.details_csv_writer.writerow(listing_copy)
                 self.details_csv_file.flush()
         else:
@@ -396,8 +382,6 @@ class Scraper:
         try:
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                 futures = {executor.submit(self.scrape_with_retries, url): url for url in urls}
-
-                # Wrap tqdm with a try-finally to ensure shutdown is called
                 try:
                     for future in tqdm(as_completed(futures), total=len(futures), desc="Scraping listings"):
                         if self.stop_requested.is_set():
@@ -405,7 +389,7 @@ class Scraper:
                             # Cancel remaining futures
                             for f in futures:
                                 f.cancel()
-                            break # Exit the loop
+                            break 
                         
                         url = futures[future]
                         try:
@@ -416,6 +400,10 @@ class Scraper:
                             self.log(f"Unexpected error with {url}: {exc}", "ERROR")
                 finally:
                     executor.shutdown(wait=True) 
+        except KeyboardInterrupt:
+            self.log("KeyboardInterrupt detected. Stopping details scraping.", "INFO")
+            self.stop_requested.set() 
+            self.shutdown()
         finally:
             self._close_details_csv()
             self.log("Details CSV file closed.", "INFO")

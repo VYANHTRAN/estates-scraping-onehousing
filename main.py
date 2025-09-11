@@ -7,10 +7,7 @@ import sys
 from src.scraping_utils import Scraper
 from src.screenshot_uploader import ScreenshotUploader
 from src.cleaning_utils import DataCleaner
-from src.config import (
-    URLS_OUTPUT_PATH,
-    DETAILS_OUTPUT_PATH
-)
+from src.config import *
 
 
 def run_scrape_urls():
@@ -21,9 +18,9 @@ def run_scrape_urls():
         scraper.save_urls(urls)
     except KeyboardInterrupt:
         print("\n[INFO] KeyboardInterrupt detected during URL scraping. Saving collected URLs and shutting down.")
-        scraper.stop_requested.set() # Set the stop flag
+        scraper.stop_requested.set() 
         scraper.save_urls(scraper.all_scraped_urls)
-        sys.exit(0) # Exit gracefully
+        sys.exit(0) 
     except Exception as e:
         print(f"[ERROR] An unexpected error occurred during URL scraping: {e}")
         scraper.save_urls(scraper.all_scraped_urls)
@@ -39,8 +36,9 @@ def run_scrape_details():
         scraper.process_listings_from_json(URLS_OUTPUT_PATH, DETAILS_OUTPUT_PATH)
     except KeyboardInterrupt:
         print("\n[INFO] KeyboardInterrupt detected during details scraping. Any unsaved details have been flushed to CSV.")
-        scraper.stop_requested.set() # Set the stop flag
-        sys.exit(0) # Exit gracefully
+        scraper.stop_requested.set() 
+        scraper.shutdown()
+        sys.exit(0) 
     except Exception as e:
         print(f"[ERROR] An unexpected error occurred during details scraping: {e}")
         sys.exit(1)
@@ -61,8 +59,6 @@ def run_screenshot_upload():
         asyncio.run(uploader.run(urls))
     except KeyboardInterrupt:
         print("\n[INFO] Screenshot upload interrupted.")
-        # asyncio.run handles KeyboardInterrupt well, but ensure any cleanup for uploader
-        # might be needed here if it manages persistent resources.
         sys.exit(0)
     except Exception as e:
         print(f"[ERROR] An unexpected error occurred during screenshot upload: {e}")
@@ -109,7 +105,6 @@ def run_full_pipeline():
         print("[INFO] Full pipeline completed.")
     except KeyboardInterrupt:
         print("\n[INFO] Full pipeline interrupted. Shutting down gracefully.")
-        # No need to set stop_requested here if each sub-function handles it.
         sys.exit(0)
     except Exception as e:
         print(f"[ERROR] An unexpected error occurred during the full pipeline: {e}")
