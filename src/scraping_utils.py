@@ -179,9 +179,9 @@ class Scraper:
 
         try:
             driver.get(url)
+            driver.get(url)
+            wait = WebDriverWait(driver, 5)  # Moved this line up
             wait.until(EC.presence_of_element_located((By.XPATH, "/html/body"))) 
-            wait = WebDriverWait(driver, 5) 
-            wait.until(EC.presence_of_element_located((By.ID, "detail_title"))) # Wait for a key element
 
             # Helper functions for safe extraction of text and attributes
             def safe_text(by, selector, timeout=5):
