@@ -2,11 +2,11 @@ import argparse
 import json
 import asyncio
 import os
-import sys 
+import sys
 
 from src.scraping_utils import Scraper
 from src.screenshot_uploader import ScreenshotUploader
-from src.cleaning_utils import DataCleaner 
+from src.cleaning_utils import DataCleaner
 from src.config import (
     URLS_OUTPUT_PATH,
     DETAILS_OUTPUT_PATH
@@ -20,8 +20,10 @@ def run_scrape_urls():
         urls = scraper.scrape_menu_pages()
         scraper.save_urls(urls)
     except KeyboardInterrupt:
-        print("\n[INFO] KeyboardInterrupt detected. Saving collected URLs and shutting down.")
-        scraper.save_urls(scraper.all_scraped_urls) 
+        print("\n[INFO] KeyboardInterrupt detected during URL scraping. Saving collected URLs and shutting down.")
+        scraper.stop_requested.set() # Set the stop flag
+        scraper.save_urls(scraper.all_scraped_urls)
+        sys.exit(0) # Exit gracefully
     except Exception as e:
         print(f"[ERROR] An unexpected error occurred during URL scraping: {e}")
         scraper.save_urls(scraper.all_scraped_urls)
@@ -36,10 +38,12 @@ def run_scrape_details():
     try:
         scraper.process_listings_from_json(URLS_OUTPUT_PATH, DETAILS_OUTPUT_PATH)
     except KeyboardInterrupt:
-        print("\n[INFO] KeyboardInterrupt detected. Any unsaved details have been flushed to CSV.")
+        print("\n[INFO] KeyboardInterrupt detected during details scraping. Any unsaved details have been flushed to CSV.")
+        scraper.stop_requested.set() # Set the stop flag
+        sys.exit(0) # Exit gracefully
     except Exception as e:
         print(f"[ERROR] An unexpected error occurred during details scraping: {e}")
-        sys.exit(1) 
+        sys.exit(1)
     finally:
         scraper.shutdown()
 
@@ -57,6 +61,9 @@ def run_screenshot_upload():
         asyncio.run(uploader.run(urls))
     except KeyboardInterrupt:
         print("\n[INFO] Screenshot upload interrupted.")
+        # asyncio.run handles KeyboardInterrupt well, but ensure any cleanup for uploader
+        # might be needed here if it manages persistent resources.
+        sys.exit(0)
     except Exception as e:
         print(f"[ERROR] An unexpected error occurred during screenshot upload: {e}")
         sys.exit(1)
@@ -68,6 +75,7 @@ def run_retry_screenshots(failed_csv):
         asyncio.run(uploader.retry_failed_screenshots(failed_csv))
     except KeyboardInterrupt:
         print("\n[INFO] Retrying screenshot upload interrupted.")
+        sys.exit(0)
     except Exception as e:
         print(f"[ERROR] An unexpected error occurred during retry screenshot upload: {e}")
         sys.exit(1)
@@ -78,10 +86,13 @@ def run_clean_data():
     print("[INFO] Cleaning scraped data...")
     try:
         cleaner = DataCleaner()
-        cleaner.load_data() 
+        cleaner.load_data()
         cleaner.clean_data()
         cleaner.save_cleaned_data()
         print("[INFO] Data cleaning completed successfully.")
+    except KeyboardInterrupt:
+        print("\n[INFO] Data cleaning interrupted.")
+        sys.exit(0)
     except Exception as e:
         print(f"[ERROR] Data cleaning failed: {e}")
         sys.exit(1)
@@ -90,6 +101,7 @@ def run_clean_data():
 def run_full_pipeline():
     """Runs the entire pipeline from scraping to cleaning."""
     print("[INFO] Running full scraping and cleaning pipeline...")
+    scraper = Scraper() 
     try:
         run_scrape_urls()
         run_scrape_details()
@@ -97,6 +109,8 @@ def run_full_pipeline():
         print("[INFO] Full pipeline completed.")
     except KeyboardInterrupt:
         print("\n[INFO] Full pipeline interrupted. Shutting down gracefully.")
+        # No need to set stop_requested here if each sub-function handles it.
+        sys.exit(0)
     except Exception as e:
         print(f"[ERROR] An unexpected error occurred during the full pipeline: {e}")
         sys.exit(1)

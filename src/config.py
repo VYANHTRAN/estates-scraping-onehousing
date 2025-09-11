@@ -11,7 +11,7 @@ CLEANED_DETAILS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "listing_details_cleaned.
 IMAGE_MAP_CSV_PATH = os.path.join(OUTPUT_DIR, "image_map.csv")
 SCREENSHOT_DIR = os.path.join(OUTPUT_DIR, "screenshots")
 
-MAX_RETRIES = 5
+MAX_RETRIES = 3
 RETRY_DELAY = 2
 MAX_WORKERS = 2
 
@@ -19,9 +19,8 @@ LOG_LEVEL = "INFO"
 
 TOTAL_PAGES = 500
 
-SELENIUM_HEADLESS = True
 SELENIUM_WAIT_TIME = 5
-DRIVER_POOL_SIZE = 2
+DRIVER_POOL_SIZE = 4
 
 CLOUDINARY_CONFIG = {
     "cloud_name": "dlsut5knb",

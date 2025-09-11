@@ -3,7 +3,8 @@ import json
 import csv
 import time
 import random
-import sys 
+import sys
+import threading 
 
 import requests
 from bs4 import BeautifulSoup
@@ -18,13 +19,9 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException, SessionNotCreatedException
 
-from src.config import (
-    BASE_URL, START_URL, OUTPUT_DIR, URLS_OUTPUT_PATH,
-    DETAILS_OUTPUT_PATH, MAX_RETRIES, RETRY_DELAY,
-    MAX_WORKERS, LOG_LEVEL, TOTAL_PAGES
-)
+from src.config import *
 
 class DriverPool:
     def __init__(self, max_workers, user_agent_generator):
@@ -32,17 +29,11 @@ class DriverPool:
         self.max_workers = max_workers
         self.ua = user_agent_generator
         self._init_pool()
+        self.drivers_in_use = 0 
 
     def _init_pool(self):
         for _ in range(self.max_workers):
-            user_agent = self._get_random_user_agent()
-            options = Options()
-            options.add_argument(f"user-agent={user_agent}")
-            options.add_argument("--headless")
-            options.add_argument("--disable-gpu")
-            options.add_argument("--no-sandbox")
-            driver = webdriver.Chrome(options=options)
-            self.pool.put(driver)
+            self._add_new_driver()
 
     def _get_random_user_agent(self):
         try:
@@ -55,29 +46,53 @@ class DriverPool:
             ]
             return random.choice(fallback_agents)
 
+    def _add_new_driver(self):
+        user_agent = self._get_random_user_agent()
+        options = Options()
+        options.add_argument(f"user-agent={user_agent}")
+        options.add_argument("--headless")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--enable-unsafe-swiftshader")
+        options.add_experimental_option('excludeSwitches', ['enable-logging']) 
+        
+        try:
+            driver = webdriver.Chrome(options=options)
+            self.pool.put(driver)
+        except SessionNotCreatedException as e:
+            print(f"[ERROR] Could not create a Chrome session. Please ensure chromedriver is compatible with your Chrome browser version. Error: {e}", file=sys.stderr)
+            if self.pool.empty(): 
+                raise RuntimeError("Failed to initialize any WebDriver instances.")
+
     def acquire(self):
-        return self.pool.get()
+        driver = self.pool.get()
+        self.drivers_in_use += 1
+        return driver
 
     def release(self, driver):
-        self.pool.put(driver)
+        if driver: 
+            self.pool.put(driver)
+        self.drivers_in_use -= 1
+
 
     def close_all(self):
         while not self.pool.empty():
             driver = self.pool.get()
-
             try:
                 driver.quit()
             except Exception as e:
                 self.log(f"Error quitting driver: {e}", "ERROR")
+        if self.drivers_in_use > 0:
+            self.log(f"Warning: {self.drivers_in_use} drivers were still in use when `close_all` was called. They might not have been properly shut down.", "WARN")
 
 
 class Scraper:
     def __init__(self):
         self.ua = UserAgent()
         self.driver_pool = DriverPool(MAX_WORKERS, self.ua)
-        self.all_scraped_urls = set() 
-        self.details_buffer = [] 
-        self.stop_requested = False 
+        self.all_scraped_urls = set()
+        self.details_buffer = []
+        self.stop_requested = threading.Event() 
         self.fieldnames = [
             "listing_title", "property_id", "total_price",
             "unit_price", "property_url", "image_url",
@@ -86,12 +101,13 @@ class Scraper:
         ]
         os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-        # Initialize CSV writer for details scraping
+        # Initialize CSV writer for details scraping with thread-safe lock 
         self.details_csv_file = None
         self.details_csv_writer = None
+        self.details_csv_lock = threading.Lock() 
 
     def log(self, message, level="INFO"):
-        levels = ["DEBUG", "INFO", "WARN", "ERROR", "CRITICAL"] 
+        levels = ["DEBUG", "INFO", "WARN", "ERROR", "CRITICAL"]
         config_level_idx = levels.index(LOG_LEVEL.upper()) if LOG_LEVEL.upper() in levels else 1
         message_level_idx = levels.index(level.upper()) if level.upper() in levels else 1
 
@@ -109,27 +125,39 @@ class Scraper:
 
     def scrape_menu_pages(self):
         for page_num in tqdm(range(1, TOTAL_PAGES + 1), desc="Scraping menu pages"):
-            if self.stop_requested:
+            if self.stop_requested.is_set(): 
                 self.log("Stop requested. Exiting URL scraping.", "INFO")
                 break
 
             url = f"{START_URL}page={page_num}"
             consecutive_http_errors = 0
+            consecutive_empty_pages = 0
 
             for retry in range(MAX_RETRIES):
+                if self.stop_requested.is_set():
+                    break
+
                 try:
                     headers = {"User-Agent": self.driver_pool._get_random_user_agent()}
-                    response = requests.get(url, headers=headers, timeout=10) 
+                    response = requests.get(url, headers=headers, timeout=10)
 
                     if 400 <= response.status_code < 600:
                         consecutive_http_errors += 1
-                        if consecutive_http_errors >= 3: 
+                        if consecutive_http_errors >= 3:
                             self.log(f"Critical: {consecutive_http_errors} consecutive HTTP errors (last: {response.status_code}) encountered while fetching {url}. Stopping URL scraping.", "CRITICAL")
-                            self.stop_requested = True
+                            self.stop_requested.set()
                             break
-                        raise Exception(f"Status code {response.status_code}") 
-                    
-                    consecutive_http_errors = 0 
+                        raise Exception(f"Status code {response.status_code}")
+                    elif response.text == None:
+                        consecutive_empty_pages += 1
+                        if consecutive_empty_pages >= 3:
+                            self.log(f"Critical: {consecutive_empty_pages} consecutive empty pages encountered while fetching {url}. Stopping URL scraping.", "CRITICAL")
+                            self.stop_requested.set()
+                            break
+                        raise Exception("Empty page content")
+
+                    consecutive_http_errors = 0
+                    consecutive_empty_pages = 0
                     links = self.get_listing_urls(response.text)
                     self.log(f"Extracted {len(links)} links from page {page_num}", "DEBUG")
                     self.all_scraped_urls.update(links)
@@ -141,13 +169,13 @@ class Scraper:
                 except Exception as e:
                     self.log(f"Retry {retry + 1}/{MAX_RETRIES} fetching page {page_num} due to: {e}", "WARN")
                     time.sleep(RETRY_DELAY)
-            else:
+            else: 
                 self.log(f"Failed to fetch page {page_num} after retries. Moving to next page.", "ERROR")
-            
-            if self.stop_requested:
-                break 
+
+            if self.stop_requested.is_set():
+                break
         return self.all_scraped_urls
-    
+
     def save_urls(self, urls_to_save):
         with open(URLS_OUTPUT_PATH, "w", encoding="utf-8") as f:
             json.dump(list(urls_to_save), f, ensure_ascii=False, indent=2)
@@ -155,45 +183,58 @@ class Scraper:
 
     def _initialize_details_csv(self, output_csv, append=False):
         """Initializes the CSV writer for listing details."""
-        file_exists = os.path.isfile(output_csv) and append
-        self.details_csv_file = open(output_csv, "a" if append else "w", newline="", encoding="utf-8")
-        self.details_csv_writer = csv.DictWriter(self.details_csv_file, fieldnames=self.fieldnames)
+        with self.details_csv_lock:
+            file_exists = os.path.isfile(output_csv) and append
+            self.details_csv_file = open(output_csv, "a" if append else "w", newline="", encoding="utf-8")
+            self.details_csv_writer = csv.DictWriter(self.details_csv_file, fieldnames=self.fieldnames)
 
-        if not file_exists:
-            self.details_csv_writer.writeheader()
+            if not file_exists:
+                self.details_csv_writer.writeheader()
 
     def _close_details_csv(self):
         """Closes the CSV file if it's open."""
-        if self.details_csv_file:
-            self.details_csv_file.close()
-            self.details_csv_file = None
-            self.details_csv_writer = None
+        with self.details_csv_lock:
+            if self.details_csv_file:
+                self.details_csv_file.close()
+                self.details_csv_file = None
+                self.details_csv_writer = None
 
     def extract_listing_details(self, url):
-        driver = self.driver_pool.acquire()
-        
-        # Check if a global stop has been requested
-        if self.stop_requested:
-            self.driver_pool.release(driver)
+        # Check if a global stop has been requested at the very beginning
+        if self.stop_requested.is_set():
             return None
 
+        driver = None # Initialize driver to None
         try:
+            driver = self.driver_pool.acquire()
+
+            # Double check stop request after acquiring driver
+            if self.stop_requested.is_set():
+                return None
+
             driver.get(url)
-            driver.get(url)
-            wait = WebDriverWait(driver, 5)  # Moved this line up
-            wait.until(EC.presence_of_element_located((By.XPATH, "/html/body"))) 
+            # No need to call driver.get(url) twice unless there's a specific reason.
+            # If the first call fails, the next line will raise an exception.
+            # driver.get(url)
+            wait = WebDriverWait(driver, 5)
+            wait.until(EC.presence_of_element_located((By.XPATH, "/html/body")))
 
             # Helper functions for safe extraction of text and attributes
             def safe_text(by, selector, timeout=5):
                 try:
+                    # Check stop_requested within safe_text as well, especially if wait.until can be long
+                    if self.stop_requested.is_set():
+                        return None
                     return wait.until(EC.presence_of_element_located((by, selector))).text
-                except (TimeoutException, NoSuchElementException):
+                except (TimeoutException, NoSuchElementException, WebDriverException): # Catch WebDriverException too
                     return None
 
             def safe_attr(by, selector, attr, timeout=5):
                 try:
+                    if self.stop_requested.is_set():
+                        return None
                     return wait.until(EC.presence_of_element_located((by, selector))).get_attribute(attr)
-                except (TimeoutException, NoSuchElementException):
+                except (TimeoutException, NoSuchElementException, WebDriverException): # Catch WebDriverException too
                     return None
 
             data = {
@@ -210,6 +251,8 @@ class Scraper:
                 "property_description": []
             }
 
+            if self.stop_requested.is_set(): return None # Check again before more work
+
             # Extract image URL
             try:
                 image_element = driver.find_element(By.XPATH, '//link[@rel="preload" and @as="image"]')
@@ -225,6 +268,7 @@ class Scraper:
                 script_elements = driver.find_elements(By.XPATH, '//script[@type="application/ld+json"]')
                 breadcrumb_data = None
                 for script_el in script_elements:
+                    if self.stop_requested.is_set(): return None
                     script_content = script_el.get_attribute("innerHTML")
                     try:
                         json_data = json.loads(script_content)
@@ -232,10 +276,11 @@ class Scraper:
                             breadcrumb_data = json_data
                             break
                     except json.JSONDecodeError:
-                        continue 
+                        continue
 
                 if breadcrumb_data:
                     for item in breadcrumb_data.get("itemListElement", []):
+                        if self.stop_requested.is_set(): return None
                         if item.get("position") == 2:
                             data["city"] = item.get("name")
                         elif item.get("position") == 3:
@@ -247,6 +292,7 @@ class Scraper:
             try:
                 features = wait.until(EC.presence_of_all_elements_located((By.XPATH, '//*[@id="key-feature-item"]')))
                 for ele in features:
+                    if self.stop_requested.is_set(): return None
                     try:
                         title_element = ele.find_element(By.XPATH, './/*[@id="item_title"]')
                         text_element = ele.find_element(By.XPATH, './/*[@id="key-feature-text"]')
@@ -271,12 +317,28 @@ class Scraper:
             return data
         except WebDriverException as e:
             self.log(f"WebDriver error for {url}: {e}", "ERROR")
+            # In case of a WebDriver crash, the driver might be invalid,
+            # so we don't put it back in the pool. A new one should be created.
+            if driver:
+                try:
+                    driver.quit() # Attempt to quit the faulty driver
+                except Exception as quit_e:
+                    self.log(f"Error quitting crashed driver: {quit_e}", "ERROR")
+                self.driver_pool.drivers_in_use -= 1 # Manually decrement
+                self.driver_pool._add_new_driver() # Replace it with a new one
             return None
         except Exception as e:
             self.log(f"Unexpected error in extract_listing_details for {url}: {e}", "ERROR")
             return None
         finally:
-            self.driver_pool.release(driver)
+            if driver and not self.stop_requested.is_set(): # Only release if not stopping
+                self.driver_pool.release(driver)
+            elif driver and self.stop_requested.is_set(): # If stopping, quit the driver
+                try:
+                    driver.quit()
+                    self.driver_pool.drivers_in_use -= 1 # Manually decrement
+                except Exception as quit_e:
+                    self.log(f"Error quitting driver during shutdown: {quit_e}", "ERROR")
 
     def save_details_to_csv(self, listing):
         """
@@ -287,8 +349,9 @@ class Scraper:
             listing_copy = listing.copy()
             listing_copy["features"] = ": ".join(listing_copy.get("features", []))
             listing_copy["property_description"] = ". ".join(listing_copy.get("property_description", []))
-            self.details_csv_writer.writerow(listing_copy)
-            self.details_csv_file.flush() 
+            with self.details_csv_lock: # Protect CSV write operation
+                self.details_csv_writer.writerow(listing_copy)
+                self.details_csv_file.flush()
         else:
             self.log("CSV writer not initialized. Cannot save details.", "ERROR")
 
@@ -298,17 +361,19 @@ class Scraper:
         Retries scraping a listing page up to a maximum number of attempts.
         Also checks for stop_requested.
         """
-        if self.stop_requested:
+        if self.stop_requested.is_set():
             return None
 
         for attempt in range(1, MAX_RETRIES + 1):
+            if self.stop_requested.is_set():
+                return None
             try:
                 result = self.extract_listing_details(url)
                 if result is not None:
                     return result
             except Exception as e:
                 self.log(f"Attempt {attempt}/{MAX_RETRIES} failed for {url}: {e}", "WARN")
-                if attempt < MAX_RETRIES:
+                if attempt < MAX_RETRIES and not self.stop_requested.is_set():
                     time.sleep(RETRY_DELAY)
         self.log(f"All attempts failed for {url}", "ERROR")
         return None
@@ -326,29 +391,38 @@ class Scraper:
                 return
 
         self.log(f"Starting parallel scrape for {len(urls)} listings...", "INFO")
-        self._initialize_details_csv(output_csv, append=True) 
+        self._initialize_details_csv(output_csv, append=True)
 
         try:
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                 futures = {executor.submit(self.scrape_with_retries, url): url for url in urls}
 
-                for future in tqdm(as_completed(futures), total=len(futures), desc="Scraping listings"):
-                    if self.stop_requested:
-                        self.log("Stop requested. Exiting details scraping.", "INFO")
-                        break 
-                    
-                    url = futures[future]
-                    try:
-                        result = future.result()
-                        if result:
-                            self.save_details_to_csv(result) 
-                    except Exception as exc:
-                        self.log(f"Unexpected error with {url}: {exc}", "ERROR")
+                # Wrap tqdm with a try-finally to ensure shutdown is called
+                try:
+                    for future in tqdm(as_completed(futures), total=len(futures), desc="Scraping listings"):
+                        if self.stop_requested.is_set():
+                            self.log("Stop requested. Exiting details scraping.", "INFO")
+                            # Cancel remaining futures
+                            for f in futures:
+                                f.cancel()
+                            break # Exit the loop
+                        
+                        url = futures[future]
+                        try:
+                            result = future.result()
+                            if result:
+                                self.save_details_to_csv(result)
+                        except Exception as exc:
+                            self.log(f"Unexpected error with {url}: {exc}", "ERROR")
+                finally:
+                    executor.shutdown(wait=True) 
         finally:
-            self._close_details_csv() 
+            self._close_details_csv()
             self.log("Details CSV file closed.", "INFO")
 
 
     def shutdown(self):
+        self.log("Shutting down scraper components...", "INFO")
         self.driver_pool.close_all()
-        self._close_details_csv() 
+        self._close_details_csv()
+        self.log("Scraper shutdown complete.", "INFO")
