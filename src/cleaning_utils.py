@@ -35,13 +35,13 @@ class DataCleaner:
             "features", "property_description"
         ]
 
-        if not merged_df.empty:
-            merged_df = merged_df.iloc[:-1]  # intentional removal of last row 
+        if not df.empty:
+            df = df.iloc[:-1]  # intentional removal of last row 
 
         # Deduplicate by 'property_id', keeping the first occurrence
-        initial_rows = len(merged_df)
-        self.df = merged_df.drop_duplicates(subset=['property_id'], keep='first')
-        
+        initial_rows = len(df)
+        self.df = df.drop_duplicates(subset=['property_id'], keep='first')
+
         if len(self.df) < initial_rows:
             print(f"[INFO] Deduplicated {initial_rows - len(self.df)} records by 'property_id'.")
 

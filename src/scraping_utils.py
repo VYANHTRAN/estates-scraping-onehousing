@@ -392,14 +392,33 @@ class Scraper:
             self.log("No URLs found in JSON file to process.", "INFO")
             return
 
-        self.log(f"Starting sequential scrape for {len(urls)} listings...", "INFO")
+        # Load processed property_urls from CSV
+        processed_urls = set()
+        if os.path.exists(output_csv):
+            with open(output_csv, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if "property_url" in row and row["property_url"]:
+                        processed_urls.add(row["property_url"])
+
+        self.log(f"Found {len(processed_urls)} already processed listings in {output_csv}", "INFO")
+
         self._initialize_details_csv(output_csv, append=True)
+
+        urls_to_process = list(set(urls) - processed_urls)
+
+        if not urls_to_process:
+            self.log("All listings already scraped. Nothing to do.", "INFO")
+            return
+
+        self.log(f"Starting to scrape {len(urls_to_process)} listings...", "INFO")
         
         try:
-            for url in tqdm(urls, desc="Scraping listing details"):
+            for url in tqdm(urls_to_process, desc="Scraping listing details"):
                 if self.stop_requested.is_set():
                     self.log("Shutdown requested. Stopping further detail scraping.", "INFO")
                     break
+
                 result = self.scrape_with_retries(url)
                 if result:
                     self.save_details_to_csv(result)
@@ -411,6 +430,7 @@ class Scraper:
             self.stop_requested.set()
         finally:
             self.shutdown()
+
 
     def shutdown(self):
         self.log("Shutting down scraper components...", "INFO")
