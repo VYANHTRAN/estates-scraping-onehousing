@@ -16,7 +16,6 @@ class DataCleaner:
     def __init__(self):
         """Initializes the DataCleaner with paths from the config file."""
         self.raw_details_path = DETAILS_OUTPUT_PATH
-        self.image_map_path = IMAGE_MAP_CSV_PATH
         self.output_path = CLEANED_DETAILS_OUTPUT_PATH
         self.df = None
         self.cleaned_df = None
@@ -35,16 +34,6 @@ class DataCleaner:
             "property_url", "image_url", "city", "district", "alley_width",
             "features", "property_description"
         ]
-        
-        # Load image map if it exists, else create empty 'screenshot_url' column
-        if os.path.exists(self.image_map_path):
-            image_map_df = pd.read_csv(self.image_map_path)
-            merged_df = pd.merge(df, image_map_df, how="left", on="property_id")
-            print(f"[INFO] Loaded and merged image map with {len(image_map_df)} records.")
-        else:
-            print(f"[WARN] Image map file not found: {self.image_map_path}. Proceeding without screenshot URLs.")
-            merged_df = df.copy() 
-            merged_df['screenshot_url'] = np.nan 
 
         if not merged_df.empty:
             merged_df = merged_df.iloc[:-1]  # intentional removal of last row 
@@ -378,7 +367,6 @@ class DataCleaner:
             "Khoảng cách tới trục đường chính (m)": self.df.apply(self._extract_distance_to_main_road, axis=1),
             "Mục đích sử dụng đất": "Đất ở",
             "Hình ảnh của bài đăng": self.df["image_url"],
-            "Ảnh chụp màn hình thông tin thu thập": self.df["screenshot_url"], # This column will now contain NaNs if file doesn't exist
             "Yếu tố khác": ""
         })
         print("[INFO] Data cleaning process completed.")

@@ -5,7 +5,6 @@ import os
 import sys
 
 from src.scraping_utils import Scraper
-from src.screenshot_uploader import ScreenshotUploader
 from src.cleaning_utils import DataCleaner
 from src.config import *
 
@@ -44,37 +43,6 @@ def run_scrape_details():
         sys.exit(1)
     finally:
         scraper.shutdown()
-
-
-def run_screenshot_upload():
-    if not os.path.exists(URLS_OUTPUT_PATH):
-        print(f"[ERROR] URLS_OUTPUT_PATH not found: {URLS_OUTPUT_PATH}. Please run 'scrape_urls' first.")
-        sys.exit(1)
-
-    with open(URLS_OUTPUT_PATH, "r", encoding="utf-8") as f:
-        urls = json.load(f)
-
-    uploader = ScreenshotUploader()
-    try:
-        asyncio.run(uploader.run(urls))
-    except KeyboardInterrupt:
-        print("\n[INFO] Screenshot upload interrupted.")
-        sys.exit(0)
-    except Exception as e:
-        print(f"[ERROR] An unexpected error occurred during screenshot upload: {e}")
-        sys.exit(1)
-
-
-def run_retry_screenshots(failed_csv):
-    uploader = ScreenshotUploader()
-    try:
-        asyncio.run(uploader.retry_failed_screenshots(failed_csv))
-    except KeyboardInterrupt:
-        print("\n[INFO] Retrying screenshot upload interrupted.")
-        sys.exit(0)
-    except Exception as e:
-        print(f"[ERROR] An unexpected error occurred during retry screenshot upload: {e}")
-        sys.exit(1)
 
 
 def run_clean_data():
@@ -137,13 +105,6 @@ def main():
         run_scrape_urls()
     elif args.task == "scrape_details":
         run_scrape_details()
-    elif args.task == "upload_screenshots":
-        run_screenshot_upload()
-    elif args.task == "retry_screenshots":
-        if not args.failed_csv:
-            print("[ERROR] --failed_csv is required for retry_screenshots.")
-            sys.exit(1)
-        run_retry_screenshots(args.failed_csv)
     elif args.task == "clean_data":
         run_clean_data()
     elif args.task == "full_pipeline":
