@@ -86,8 +86,6 @@ def main():
         choices=[
             "scrape_urls",
             "scrape_details",
-            "upload_screenshots",
-            "retry_screenshots",
             "clean_data",
             "full_pipeline",
         ],

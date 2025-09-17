@@ -98,3 +98,5 @@ screenshots/
 downloaded_files/
 # Ignore folder for output
 data/
+
+screenshots_uploader.py
